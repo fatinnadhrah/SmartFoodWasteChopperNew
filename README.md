@@ -215,5 +215,5 @@ Is additional chopping required?
 - The processed food waste is then directed towards the lower collection drawer.
 - The motor and electrical components are positioned away from the direct food waste path to reduce the risk of food waste entering the motor and electrical components.
 
-
+status projek masih dalam pembinaan coding untuk button switch on/off, menyusun komponen-komponen pada tong & masih dalam proses connect esp dengan wifi.
    
