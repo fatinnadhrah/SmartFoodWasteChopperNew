@@ -1,6 +1,6 @@
-CREATE DATABASE IF NOT EXISTS smart_food_waste;
+CREATE DATABASE IF NOT EXISTS smart_food_waste_chopper;
 
-USE smart_food_waste;
+USE smart_food_waste_chopper;
 
 CREATE TABLE users (
     id INT AUTO_INCREMENT PRIMARY KEY,
