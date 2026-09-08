@@ -188,7 +188,7 @@ $username = $_SESSION["username"];
         </p>
 
     </div>
-            </section>
+            </section
 
 
             <section class="log-panel">

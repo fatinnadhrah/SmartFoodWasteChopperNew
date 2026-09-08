@@ -5,6 +5,7 @@ let remaining = 0;
 const LOCK_COUNTDOWN = 20;
 
 const CHOP_TIME = 30;
+
 // ===============================
 // SENSOR CONTROL
 // ===============================
@@ -69,6 +70,10 @@ function toggleSensor() {
                     "Ultrasonic Sensor is OFF";
             }
 
+        } else {
+
+            message.textContent =
+                data.message || "Sensor command failed";
         }
 
     })
@@ -76,7 +81,6 @@ function toggleSensor() {
     .catch(error => {
 
         console.error("Sensor error:", error);
-
     });
 }
 
@@ -134,17 +138,45 @@ function loadSensorStatus() {
     .catch(error => {
 
         console.error("Cannot get sensor status:", error);
-
     });
 }
 
 
-// Check sensor status when page opens
+// ===============================
+// LOAD LIVE MACHINE STATUS FROM DATABASE
+// ===============================
 
-document.addEventListener(
-    "DOMContentLoaded",
-    loadSensorStatus
-);
+function loadMachineStatus() {
+
+    fetch("get_status.php")
+
+    .then(response => response.json())
+
+    .then(data => {
+
+        if (data.success) {
+
+            updateStatus(
+                data.data.machine_status,
+                data.data.detection,
+                data.data.lid_status,
+                data.data.motor_status
+            );
+
+            document.getElementById(
+                "timer"
+            ).textContent =
+                String(data.data.remaining_time).padStart(2, "0");
+        }
+
+    })
+
+    .catch(error => {
+
+        console.error("Cannot get machine status:", error);
+    });
+}
+
 
 function updateStatus(
     machine,
@@ -321,3 +353,20 @@ function showNotification() {
 
     }, 6000);
 }
+
+
+// ===============================
+// INITIAL LOAD + POLLING
+// ===============================
+
+document.addEventListener("DOMContentLoaded", () => {
+
+    loadSensorStatus();
+    loadMachineStatus();
+
+    // Refresh machine status from the database every 3 seconds
+    setInterval(loadMachineStatus, 3000);
+
+    // Refresh sensor status every 5 seconds
+    setInterval(loadSensorStatus, 5000);
+});

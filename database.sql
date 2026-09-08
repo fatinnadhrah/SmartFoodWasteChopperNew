@@ -21,6 +21,16 @@ CREATE TABLE machine_status (
         ON UPDATE CURRENT_TIMESTAMP
 );
 
+-- NEW: stores whether the ultrasonic sensor is currently ON or OFF.
+-- Needed because command.php / script.js reference this state but no
+-- table previously existed to hold it.
+CREATE TABLE sensor_status (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    sensor_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP
+);
+
 INSERT INTO machine_status
 (
     machine_status,
@@ -37,3 +47,5 @@ VALUES
     'OFF',
     0
 );
+
+INSERT INTO sensor_status (sensor_enabled) VALUES (0);

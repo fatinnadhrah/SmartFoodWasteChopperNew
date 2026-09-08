@@ -228,6 +228,46 @@ main {
 }
 
 
+/* ===============================
+   SENSOR CONTROL
+   (FIXED: moved outside the mobile
+   media query so it works on all
+   screen sizes, not just <600px)
+================================ */
+
+.sensor-control {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #213444;
+}
+
+.sensor-control h2 {
+    margin-bottom: 10px;
+}
+
+.sensor-control p {
+    color: #8195a5;
+}
+
+#sensorBtn {
+    padding: 13px 25px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.sensor-on {
+    background: #24d17e;
+    color: #071019;
+}
+
+.sensor-off {
+    background: #4a1f1f;
+    color: white;
+}
+
+
 @media (max-width: 900px) {
 
     .status-grid {
@@ -252,44 +292,5 @@ main {
     .status-grid {
         grid-template-columns: 1fr;
     }
-
-/* ===============================
-   SENSOR CONTROL
-================================ */
-
-.sensor-control {
-    margin-top: 30px;
-    padding-top: 20px;
-    border-top: 1px solid #213444;
-}
-
-.sensor-control h2 {
-    margin-bottom: 10px;
-}
-
-.sensor-control p {
-    color: #8195a5;
-}
-
-
-#sensorBtn {
-    padding: 13px 25px;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: bold;
-}
-
-
-.sensor-on {
-    background: #24d17e;
-    color: #071019;
-}
-
-
-.sensor-off {
-    background: #4a1f1f;
-    color: white;
-}
 
 }

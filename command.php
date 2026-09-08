@@ -1,287 +1,138 @@
+<?php
 
-#include <WiFi.h>
-#include <WebServer.h>
+session_start();
+require_once "config.php";
 
-// ==================================================
-// 1. WIFI SETTING
-// ==================================================
+header("Content-Type: application/json");
 
-const char* ssid = "NAMA_WIFI_KAU";
-const char* password = "PASSWORD_WIFI_KAU";
-
-
-// ==================================================
-// 2. ULTRASONIC SENSOR
-// ==================================================
-
-const int TRIG_PIN = 5;
-const int ECHO_PIN = 18;
-
-
-// ==================================================
-// 3. SENSOR STATUS
-// ==================================================
-
-bool sensorStatus = false;
-
-
-// ==================================================
-// 4. WEB SERVER
-// ==================================================
-
-WebServer server(80);
-
-
-// ==================================================
-// 5. BACA JARAK ULTRASONIC
-// ==================================================
-
-float getDistance() {
-
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-
-  digitalWrite(TRIG_PIN, LOW);
-
-  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
-
-  if (duration == 0) {
-    return -1;
-  }
-
-  float distance = duration * 0.0343 / 2;
-
-  return distance;
+if (!isset($_SESSION["user_id"])) {
+    http_response_code(401);
+    echo json_encode([
+        "success" => false,
+        "message" => "Please login first."
+    ]);
+    exit;
 }
 
+// ------------------------------------------------
+// Call an endpoint on the ESP32 over Wi-Fi (HTTP)
+// ------------------------------------------------
+function callEsp32($path) {
 
-// ==================================================
-// 6. SENSOR ON
-// ==================================================
+    $url = "http://" . ESP32_IP . $path;
 
-void sensorOn() {
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 3);
 
-  sensorStatus = true;
+    $response = curl_exec($ch);
+    $ok = ($response !== false) && (curl_errno($ch) === 0);
+    $error = curl_error($ch);
 
-  Serial.println("Sensor ON");
+    curl_close($ch);
 
-  server.send(
-    200,
-    "text/plain",
-    "Sensor ON"
-  );
+    return [$ok, $response, $error];
 }
 
+// ------------------------------------------------
+// Save / read the last known sensor state in MySQL
+// (used as a fallback if the ESP32 is unreachable)
+// ------------------------------------------------
+function saveSensorState($conn, $enabled) {
+    $val = $enabled ? 1 : 0;
 
-// ==================================================
-// 7. SENSOR OFF
-// ==================================================
-
-void sensorOff() {
-
-  sensorStatus = false;
-
-  Serial.println("Sensor OFF");
-
-  server.send(
-    200,
-    "text/plain",
-    "Sensor OFF"
-  );
+    $stmt = $conn->prepare(
+        "INSERT INTO sensor_status (sensor_enabled) VALUES (?)"
+    );
+    $stmt->bind_param("i", $val);
+    $stmt->execute();
+    $stmt->close();
 }
 
-
-// ==================================================
-// 8. SENSOR STATUS
-// ==================================================
-
-void sensorStatusPage() {
-
-  if (sensorStatus == true) {
-
-    server.send(
-      200,
-      "text/plain",
-      "ON"
+function getLastSensorState($conn) {
+    $result = $conn->query(
+        "SELECT sensor_enabled FROM sensor_status ORDER BY id DESC LIMIT 1"
     );
 
-  } else {
-
-    server.send(
-      200,
-      "text/plain",
-      "OFF"
-    );
-  }
-}
-
-
-// ==================================================
-// 9. READ DISTANCE
-// ==================================================
-
-void readSensor() {
-
-  if (sensorStatus == false) {
-
-    server.send(
-      200,
-      "text/plain",
-      "Sensor OFF"
-    );
-
-    return;
-  }
-
-  float distance = getDistance();
-
-  if (distance < 0) {
-
-    server.send(
-      200,
-      "text/plain",
-      "No reading"
-    );
-
-    return;
-  }
-
-  String result = String(distance, 2) + " cm";
-
-  Serial.print("Distance: ");
-  Serial.print(distance);
-  Serial.println(" cm");
-
-  server.send(
-    200,
-    "text/plain",
-    result
-  );
-}
-
-
-// ==================================================
-// 10. SETUP
-// ==================================================
-
-void setup() {
-
-  Serial.begin(115200);
-
-
-  // ------------------------------------------------
-  // Ultrasonic PIN
-  // ------------------------------------------------
-
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-
-  digitalWrite(TRIG_PIN, LOW);
-
-
-  // ------------------------------------------------
-  // CONNECT WIFI
-  // ------------------------------------------------
-
-  Serial.println();
-  Serial.println("Connecting to WiFi...");
-
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-
-    delay(500);
-
-    Serial.print(".");
-  }
-
-
-  // ------------------------------------------------
-  // WIFI CONNECTED
-  // ------------------------------------------------
-
-  Serial.println();
-  Serial.println("WiFi Connected!");
-
-  Serial.print("ESP32 IP Address: ");
-  Serial.println(WiFi.localIP());
-
-
-  // ------------------------------------------------
-  // WEBSITE COMMAND
-  // ------------------------------------------------
-
-  server.on(
-    "/sensor/on",
-    HTTP_GET,
-    sensorOn
-  );
-
-
-  server.on(
-    "/sensor/off",
-    HTTP_GET,
-    sensorOff
-  );
-
-
-  server.on(
-    "/sensor/status",
-    HTTP_GET,
-    sensorStatusPage
-  );
-
-
-  server.on(
-    "/sensor/read",
-    HTTP_GET,
-    readSensor
-  );
-
-
-  // ------------------------------------------------
-  // START SERVER
-  // ------------------------------------------------
-
-  server.begin();
-
-  Serial.println("ESP32 Web Server Started!");
-}
-
-
-// ==================================================
-// 11. LOOP
-// ==================================================
-
-void loop() {
-
-  // Check website commands
-  server.handleClient();
-
-
-  // ------------------------------------------------
-  // READ SENSOR ONLY WHEN ON
-  // ------------------------------------------------
-
-  if (sensorStatus == true) {
-
-    float distance = getDistance();
-
-    if (distance >= 0) {
-
-      Serial.print("Distance: ");
-      Serial.print(distance);
-      Serial.println(" cm");
-
-    } else {
-
-      Serial.println("No ultrasonic reading");
+    if ($result && $row = $result->fetch_assoc()) {
+        return (bool) $row["sensor_enabled"];
     }
 
-    delay(500);
-  }
+    return false;
 }
 
+// ------------------------------------------------
+// GET ?get=sensor -> report current sensor state
+// ------------------------------------------------
+if ($_SERVER["REQUEST_METHOD"] === "GET" && ($_GET["get"] ?? "") === "sensor") {
+
+    [$ok, $response] = callEsp32("/sensor/status");
+
+    if ($ok) {
+        $enabled = (trim($response) === "ON");
+        saveSensorState($conn, $enabled);
+    } else {
+        // ESP32 not reachable right now - fall back to the
+        // last state we saved in the database.
+        $enabled = getLastSensorState($conn);
+    }
+
+    echo json_encode([
+        "success" => true,
+        "sensor_enabled" => $enabled
+    ]);
+
+    $conn->close();
+    exit;
+}
+
+// ------------------------------------------------
+// POST command=SENSOR_ON / SENSOR_OFF
+// ------------------------------------------------
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    $command = $_POST["command"] ?? "";
+
+    if (!in_array($command, ["SENSOR_ON", "SENSOR_OFF"], true)) {
+        echo json_encode([
+            "success" => false,
+            "message" => "Invalid command"
+        ]);
+        exit;
+    }
+
+    $endpoint = ($command === "SENSOR_ON") ? "/sensor/on" : "/sensor/off";
+
+    [$ok, , $error] = callEsp32($endpoint);
+
+    if (!$ok) {
+        echo json_encode([
+            "success" => false,
+            "message" => "Cannot reach ESP32 at " . ESP32_IP . " (" . $error . "). " .
+                          "Make sure the ESP32 and this server are on the same Wi-Fi network."
+        ]);
+        $conn->close();
+        exit;
+    }
+
+    $enabled = ($command === "SENSOR_ON");
+    saveSensorState($conn, $enabled);
+
+    echo json_encode([
+        "success" => true,
+        "sensor_enabled" => $enabled
+    ]);
+
+    $conn->close();
+    exit;
+}
+
+echo json_encode([
+    "success" => false,
+    "message" => "Invalid request"
+]);
+
+$conn->close();
+
+?>
