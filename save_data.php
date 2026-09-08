@@ -1,62 +1,66 @@
 <?php
 
-header("Content-Type: application/json");
-
 require_once "config.php";
 
-$machine =
-    $_POST["machine_status"] ?? "READY";
+// Check whether the request comes from ESP32
+if ($_SERVER["REQUEST_METHOD"] !== "POST") {
+    echo "Invalid request method";
+    exit;
+}
 
-$detection =
-    $_POST["detection"] ?? "NO";
+// Get data sent by ESP32
+$machine_status = $_POST["machine_status"] ?? "";
+$detection = $_POST["detection"] ?? "";
+$lid_status = $_POST["lid_status"] ?? "";
+$motor_status = $_POST["motor_status"] ?? "";
+$remaining_time = isset($_POST["remaining_time"])
+    ? intval($_POST["remaining_time"])
+    : 0;
 
-$lid =
-    $_POST["lid_status"] ?? "UNLOCKED";
+// Check required data
+if (
+    $machine_status === "" ||
+    $detection === "" ||
+    $lid_status === "" ||
+    $motor_status === ""
+) {
+    echo "Missing data";
+    exit;
+}
 
-$motor =
-    $_POST["motor_status"] ?? "OFF";
+// Prepare SQL statement
+$sql = "INSERT INTO machine_status
+        (machine_status, detection, lid_status, motor_status, remaining_time)
+        VALUES (?, ?, ?, ?, ?)";
 
-$remaining =
-    intval($_POST["remaining_time"] ?? 0);
+$stmt = $conn->prepare($sql);
 
+if (!$stmt) {
+    echo "SQL prepare failed: " . $conn->error;
+    exit;
+}
 
-$stmt = $conn->prepare("
-    INSERT INTO machine_status
-    (
-        machine_status,
-        detection,
-        lid_status,
-        motor_status,
-        remaining_time
-    )
-    VALUES (?, ?, ?, ?, ?)
-");
-
-
+// Bind data
 $stmt->bind_param(
     "ssssi",
-    $machine,
+    $machine_status,
     $detection,
-    $lid,
-    $motor,
-    $remaining
+    $lid_status,
+    $motor_status,
+    $remaining_time
 );
 
-
+// Execute
 if ($stmt->execute()) {
 
-    echo json_encode([
-        "success" => true,
-        "message" => "Data saved"
-    ]);
+    echo "Data saved successfully";
 
 } else {
 
-    echo json_encode([
-        "success" => false,
-        "message" => "Failed to save data"
-    ]);
-
+    echo "Failed to save data: " . $stmt->error;
 }
+
+$stmt->close();
+$conn->close();
 
 ?>
