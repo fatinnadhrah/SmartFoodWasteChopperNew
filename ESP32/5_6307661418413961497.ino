@@ -1,1107 +1,996 @@
+
+#include <WiFi.h>
+#include <HTTPClient.h>
 #include <Wire.h>
 #include <hd44780.h>
 #include <hd44780ioClass/hd44780_I2Cexp.h>
 #include <ESP32Servo.h>
 
-// ===============================
-// SENSOR + BUZZER
-// ===============================
-
-#define TRIG_PIN 12
-#define ECHO_PIN 14
-
+// =========================
+// PIN
+// =========================
+#define LIMIT_SWITCH_PIN 12
+#define BUTTON_PIN 25
+#define SERVO_PIN 26
 #define BUZZER_PIN 18
 
-// ===============================
-// BTS7960 MOTOR
-// ===============================
+#define RPWM 32
+#define LPWM 33
+#define R_EN 16
+#define L_EN 17
 
-#define MOTOR_RPWM 32
-#define MOTOR_LPWM 33
+// =========================
+// LCD & SERVO
+// =========================
+hd44780_I2Cexp lcd;
+Servo lockServo;
 
-#define R_EN_PIN 16
-#define L_EN_PIN 17
+// SG90 SERVO
+#define SERVO_LOCK_ANGLE 90
+#define SERVO_UNLOCK_ANGLE 0
 
-// Use different channels to avoid servo conflict
-
-#define MOTOR_R_CHANNEL 2
-#define MOTOR_L_CHANNEL 3
-
-
-#define MOTOR_FREQ 25000
-#define MOTOR_RESOLUTION 8
-
-
-// ===============================
-// BUTTON
-// ===============================
-
-#define BUTTON_PIN 25
-
-
-bool lastButtonState = HIGH;
-
-
-// ===============================
-// MOTOR STATE
-// ===============================
+// =========================
+// MOTOR
+// =========================
+#define MOTOR_SPEED 128
+#define MOTOR_TIME 30000
 
 bool motorRunning = false;
-
-
 unsigned long motorStartTime = 0;
 
+// =========================
+// BUZZER
+// =========================
+#define BUZZER_TIME 6000
 
-const unsigned long MOTOR_RUN_TIME = 30000;
+bool buzzerRunning = false;
+unsigned long buzzerStartTime = 0;
 
-
-// ===============================
-// BUTTON SERVO LOCK STATE
-// ===============================
-
-bool buttonLockActive = false;
-
-
-unsigned long buttonLockStartTime = 0;
-
-
-const unsigned long BUTTON_LOCK_TIME = 30000;
-
-// ===============================
-// SERVO
-// ===============================
-
-Servo myServoPenutup;
-
-Servo myServoLocker;
-
-// ===============================
-// LCD
-// ===============================
-
-hd44780_I2Cexp lcd;
-
-// ===============================
+// =========================
 // SYSTEM STATE
-// ===============================
+// =========================
+enum SystemState {
+  READY,
+  CHOPPING,
+  COMPLETE,
+  ERROR_STATE,
+  LOCKING
+};
 
-bool processComplete = false;
+SystemState systemState = READY;
 
-// ===============================
-// BTS7960 MOTOR STOP
-// ===============================
+// =========================
+// WIFI
+// =========================
+const char* WIFI_SSID = "moonzzzz";
+const char* WIFI_PASSWORD = "123456789";
 
-void motorStop()
-{
+const char* SAVE_DATA_URL =
+  "http://192.168.224.1/SmartFoodWasteChopperNew/save_data.php";
 
+// =========================
+// LCD MEMORY
+// =========================
+String lastLine1 = "";
+String lastLine2 = "";
+String lastLine3 = "";
+String lastLine4 = "";
 
-  ledcWriteChannel(
-    MOTOR_R_CHANNEL,
-    0
-  );
-
-
-  ledcWriteChannel(
-    MOTOR_L_CHANNEL,
-    0
-  );
-
-
-
-  digitalWrite(
-    R_EN_PIN,
-    LOW
-  );
-
-
-  digitalWrite(
-    L_EN_PIN,
-    LOW
-  );
-
-
-
-  Serial.println("MOTOR STOP");
-
+// =========================
+// LIMIT SWITCH
+// HIGH = CLOSED
+// LOW  = OPEN
+// =========================
+bool isLidClosed() {
+  return digitalRead(LIMIT_SWITCH_PIN) == HIGH;
 }
 
-// ===============================
-// BTS7960 MOTOR FORWARD
-// ===============================
-
-void motorForward(int speed)
-{
-
-
-  digitalWrite(
-    R_EN_PIN,
-    HIGH
-  );
-
-
-  digitalWrite(
-    L_EN_PIN,
-    HIGH
-  );
-
-
-
-  int pwmValue = map(
-    speed,
-    0,
-    100,
-    0,
-    255
-  );
-
-
-
-  ledcWriteChannel(
-    MOTOR_R_CHANNEL,
-    pwmValue
-  );
-
-
-  ledcWriteChannel(
-    MOTOR_L_CHANNEL,
-    0
-  );
-
-
-  Serial.print("PWM VALUE: ");
-
-  Serial.println(pwmValue);
-
-
+bool isLidOpen() {
+  return digitalRead(LIMIT_SWITCH_PIN) == LOW;
 }
 
-// ===============================
-// MOTOR START
-// ===============================
+// =========================
+// CHECK LID SAFETY
+// =========================
+bool lidClosedSecure() {
 
-void motorFunction()
-{
+  int closedCount = 0;
 
-  if(!motorRunning)
-  {
+  Serial.println("Checking lid safety...");
 
+  for (int i = 0; i < 3; i++) {
 
-    Serial.println("MOTOR START");
-
-
-    motorForward(50);
-
-
-
-    motorRunning = true;
-
-
-    motorStartTime = millis();
-
-
-  }
-
-}
-
-// ===============================
-// MOTOR TIMER
-// ===============================
-
-void motorUpdate()
-{
-
-
-  if(motorRunning)
-  {
-
-
-    if(millis() - motorStartTime >= MOTOR_RUN_TIME)
-    {
-
-
-      motorStop();
-
-
-      motorRunning = false;
-
-
-
-      Serial.println("MOTOR COMPLETE");
-
-
+    if (isLidClosed()) {
+      closedCount++;
     }
 
-
+    delay(50);
   }
 
+  Serial.print("Closed readings: ");
+  Serial.print(closedCount);
+  Serial.println("/3");
 
-}
-// ===============================
-// BUTTON SERVO LOCK FUNCTION
-// ===============================
+  if (closedCount >= 2) {
 
-void buttonLockFunction()
-{
+    Serial.println("LID SAFETY: OK");
 
-  Serial.println("BUTTON LOCK START");
-
-
-  myServoPenutup.write(90);
-
-
-  delay(500);
-
-
-  myServoLocker.write(90);
-
-
-
-  paparanLCD(
-    "RUNNING",
-    "NO",
-    "LOCKED"
-  );
-
-
-
-  // Active LOW buzzer OFF
-
-  digitalWrite(
-    BUZZER_PIN,
-    HIGH
-  );
-
-
-
-  buttonLockActive = true;
-
-
-  buttonLockStartTime = millis();
-
-}
-
-// ===============================
-// BUTTON COMPLETE FUNCTION
-// ===============================
-
-void buttonCompleteFunction()
-{
-  myServoPenutup.write(0);
-
-
-  myServoLocker.write(0);
-
-  Serial.println("BUTTON PROCESS COMPLETE");
-
-
-  paparanLCD(
-    "COMPLETE",
-    "NO",
-    "UNLOCKED"
-  );
-
-
-  buzzerComplete();
-  delay(30000);
-  
-}
-
-
-// ===============================
-// BUTTON SERVO LOCK UPDATE
-// ===============================
-
-void buttonLockUpdate()
-{
-
-
-  if(buttonLockActive)
-  {
-
-
-    // Hold servo position
-
-    myServoPenutup.write(90);
-
-    myServoLocker.write(90);
-
-
-
-
-    if(millis() - buttonLockStartTime >= BUTTON_LOCK_TIME)
-    {
-
-
-      buttonLockActive = false;
-
-
-
-      Serial.println("BUTTON LOCK COMPLETE");
-
-
-
-      buttonCompleteFunction();
-
-
-    }
-
+    return true;
   }
 
+  Serial.println("LID SAFETY: FAILED");
 
+  return false;
 }
 
-// ===============================
+// =========================
+// MOTOR STOP
+// =========================
+void motorStop() {
+
+  ledcWrite(RPWM, 0);
+  ledcWrite(LPWM, 0);
+
+  digitalWrite(R_EN, LOW);
+  digitalWrite(L_EN, LOW);
+
+  motorRunning = false;
+
+  Serial.println("MOTOR: OFF");
+}
+
+// =========================
+// MOTOR FORWARD
+// =========================
+void motorForward() {
+
+  Serial.println("Preparing motor...");
+
+  ledcWrite(RPWM, 0);
+  ledcWrite(LPWM, 0);
+
+  digitalWrite(R_EN, HIGH);
+  digitalWrite(L_EN, HIGH);
+
+  delay(200);
+
+  ledcWrite(LPWM, 0);
+  ledcWrite(RPWM, MOTOR_SPEED);
+
+  motorRunning = true;
+
+  Serial.println("MOTOR: ON");
+}
+
+// =========================
+// SG90 LOCK
+// =========================
+void lockLid() {
+
+  Serial.println();
+  Serial.println("--------------------------");
+  Serial.println("LOCKING LID...");
+  Serial.println("--------------------------");
+
+  // SG90 -> LOCK
+  lockServo.write(SERVO_LOCK_ANGLE);
+
+  Serial.println("SG90: MOVING TO LOCK");
+
+  delay(1000);
+
+  Serial.println("SG90: LOCK POSITION REACHED");
+}
+
+// =========================
+// SG90 UNLOCK
+// =========================
+void unlockLid() {
+
+  Serial.println();
+  Serial.println("UNLOCKING LID...");
+
+  // SG90 -> UNLOCK
+  lockServo.write(SERVO_UNLOCK_ANGLE);
+
+  delay(1000);
+
+  Serial.println("SG90: UNLOCKED");
+}
+
+// =========================
+// BUZZER OFF
+// =========================
+void buzzerOff() {
+
+  digitalWrite(BUZZER_PIN, HIGH);
+
+  buzzerRunning = false;
+
+  Serial.println("BUZZER: OFF");
+}
+
+// =========================
 // BUZZER COMPLETE
-// ACTIVE LOW
-// ===============================
+// =========================
+void buzzerComplete() {
 
-void buzzerComplete()
-{
+  digitalWrite(BUZZER_PIN, LOW);
 
-  // BUZZER ON
+  buzzerRunning = true;
 
-  digitalWrite(
-    BUZZER_PIN,
-    LOW
-  );
+  buzzerStartTime = millis();
 
-
-
-  delay(6000);
-
-
-
-  // BUZZER OFF
-
-  digitalWrite(
-    BUZZER_PIN,
-    HIGH
-  );
-
+  Serial.println("BUZZER: ON");
 }
 
-// ===============================
-// HC-SR04 DISTANCE
-// ===============================
+// =========================
+// LCD UPDATE
+// =========================
+void updateLCD(
+  String line1,
+  String line2,
+  String line3,
+  String line4
+) {
 
-float bacaJarak()
-{
+  if (line1 != lastLine1) {
 
-  digitalWrite(
-    TRIG_PIN,
-    LOW
-  );
+    lcd.setCursor(0, 0);
+    lcd.print("                    ");
 
+    lcd.setCursor(0, 0);
+    lcd.print(line1);
 
-  delayMicroseconds(2);
-
-
-
-  digitalWrite(
-    TRIG_PIN,
-    HIGH
-  );
-
-
-  delayMicroseconds(10);
-
-
-
-  digitalWrite(
-    TRIG_PIN,
-    LOW
-  );
-
-
-
-  long duration = pulseIn(
-    ECHO_PIN,
-    HIGH,
-    30000
-  );
-
-
-
-  if(duration == 0)
-  {
-
-    return -1;
-
+    lastLine1 = line1;
   }
 
+  if (line2 != lastLine2) {
 
+    lcd.setCursor(0, 1);
+    lcd.print("                    ");
 
-  return duration * 0.0343 / 2;
+    lcd.setCursor(0, 1);
+    lcd.print(line2);
 
+    lastLine2 = line2;
+  }
+
+  if (line3 != lastLine3) {
+
+    lcd.setCursor(0, 2);
+    lcd.print("                    ");
+
+    lcd.setCursor(0, 2);
+    lcd.print(line3);
+
+    lastLine3 = line3;
+  }
+
+  if (line4 != lastLine4) {
+
+    lcd.setCursor(0, 3);
+    lcd.print("                    ");
+
+    lcd.setCursor(0, 3);
+    lcd.print(line4);
+
+    lastLine4 = line4;
+  }
 }
 
-// ===============================
+// =========================
 // LCD DISPLAY
-// ===============================
+// =========================
+void paparanLCD() {
 
-void paparanLCD(
-String machineStatus,
-String detection,
-String lid
-)
-{
+  String machineStatus;
+  String lidStatus;
+  String motorStatus;
 
-  lcd.clear();
+  if (systemState == READY)
+    machineStatus = "READY";
 
+  else if (systemState == CHOPPING)
+    machineStatus = "PROCESSING";
 
+  else if (systemState == COMPLETE)
+    machineStatus = "COMPLETE";
 
-  lcd.setCursor(0,0);
+  else if (systemState == LOCKING)
+    machineStatus = "LOCKING";
 
-  lcd.print("MACHINE: ");
+  else
+    machineStatus = "ERROR";
 
-  lcd.print(machineStatus);
+  if (isLidClosed())
+    lidStatus = "CLOSED";
 
+  else
+    lidStatus = "OPEN";
 
+  if (motorRunning)
+    motorStatus = "ON";
 
-  lcd.setCursor(0,1);
+  else
+    motorStatus = "OFF";
 
-  lcd.print("DETECTION: ");
-
-  lcd.print(detection);
-
-
-
-  lcd.setCursor(0,2);
-
-  lcd.print("LID: ");
-
-  lcd.print(lid);
-
-
-}
-// ===============================
-// READY STATE
-// ===============================
-
-void keadaanReady()
-{
-
-  myServoPenutup.write(90);
-
-
-  myServoLocker.write(0);
-
-
-
-  paparanLCD(
-    "READY",
-    "NO",
-    "UNLOCKED"
+  updateLCD(
+    "MACHINE: " + machineStatus,
+    "DETECTION: N/A",
+    "LID: " + lidStatus,
+    "MOTOR: " + motorStatus
   );
-
-
-
-  // Active LOW buzzer OFF
-
-  digitalWrite(
-    BUZZER_PIN,
-    HIGH
-  );
-
 }
 
-// ===============================
-// PROCESS STATE
-// ===============================
+// =========================
+// START MOTOR PROCESS
+// =========================
+void motorStart() {
 
-void keadaanProcess()
-{
+  Serial.println();
+  Serial.println("==========================");
+  Serial.println("START PROCESS");
+  Serial.println("==========================");
 
-  myServoPenutup.write(0);
+  // CHECK LID BEFORE LOCK
+  if (!isLidClosed()) {
 
+    Serial.println("ERROR: LID IS OPEN");
+    Serial.println("MOTOR WILL NOT START");
 
-  myServoLocker.write(0);
+    motorStop();
 
+    systemState = ERROR_STATE;
 
+    paparanLCD();
 
-  paparanLCD(
-    "PROCESS",
-    "YES",
-    "UNLOCKED"
+    return;
+  }
+
+  Serial.println("LID BEFORE LOCK: CLOSED");
+
+  // =====================
+  // LOCKING
+  // =====================
+  systemState = LOCKING;
+
+  updateLCD(
+    "MACHINE: LOCKING",
+    "DETECTION: N/A",
+    "LID: CLOSED",
+    "MOTOR: OFF"
   );
 
+  // SG90 LOCK
+  lockLid();
 
+  // =====================
+  // VERIFY LOCK
+  // =====================
+  Serial.println();
+  Serial.println("VERIFYING LOCK...");
 
-  // Active LOW buzzer OFF
+  if (!lidClosedSecure()) {
 
-  digitalWrite(
-    BUZZER_PIN,
-    HIGH
+    Serial.println("!!! LOCK FAILED !!!");
+    Serial.println("MOTOR WILL NOT START");
+
+    motorStop();
+
+    unlockLid();
+
+    systemState = ERROR_STATE;
+
+    paparanLCD();
+
+    return;
+  }
+
+  // FINAL LID CHECK
+  if (!isLidClosed()) {
+
+    Serial.println("!!! LID NOT CLOSED !!!");
+    Serial.println("MOTOR WILL NOT START");
+
+    motorStop();
+
+    unlockLid();
+
+    systemState = ERROR_STATE;
+
+    paparanLCD();
+
+    return;
+  }
+
+  // =====================
+  // LOCK VERIFIED
+  // =====================
+  Serial.println();
+  Serial.println("==========================");
+  Serial.println("LOCK VERIFIED");
+  Serial.println("STARTING MOTOR");
+  Serial.println("==========================");
+
+  // FINAL SAFETY CHECK
+  if (!isLidClosed()) {
+
+    Serial.println("FINAL SAFETY CHECK FAILED!");
+    Serial.println("MOTOR BLOCKED!");
+
+    motorStop();
+
+    unlockLid();
+
+    systemState = ERROR_STATE;
+
+    paparanLCD();
+
+    return;
+  }
+
+  // =====================
+  // START PROCESSING
+  // =====================
+  systemState = CHOPPING;
+
+  motorForward();
+
+  motorStartTime = millis();
+
+  paparanLCD();
+}
+
+// =========================
+// MOTOR UPDATE
+// =========================
+void motorUpdate() {
+
+  if (!motorRunning)
+    return;
+
+  // SAFETY: LID OPEN
+  if (isLidOpen()) {
+
+    Serial.println();
+    Serial.println("!!! SAFETY !!!");
+    Serial.println("LID OPEN!");
+    Serial.println("MOTOR EMERGENCY STOP!");
+
+    motorStop();
+
+    unlockLid();
+
+    systemState = ERROR_STATE;
+
+    paparanLCD();
+
+    return;
+  }
+
+  unsigned long elapsedTime =
+    millis() - motorStartTime;
+
+  unsigned long remainingTime = 0;
+
+  if (elapsedTime < MOTOR_TIME) {
+
+    remainingTime =
+      (MOTOR_TIME - elapsedTime) / 1000;
+  }
+
+  // =====================
+  // PROCESSING
+  // =====================
+  if (elapsedTime < MOTOR_TIME) {
+
+    Serial.print("PROCESSING: ");
+    Serial.print(remainingTime);
+    Serial.println(" seconds");
+
+    updateLCD(
+      "MACHINE: PROCESSING",
+      "DETECTION: N/A",
+      "LID: CLOSED",
+      "TIME: " + String(remainingTime) + "s"
+    );
+  }
+
+  // =====================
+  // COMPLETE
+  // =====================
+  if (elapsedTime >= MOTOR_TIME) {
+
+    Serial.println();
+    Serial.println("==========================");
+    Serial.println("PROCESS COMPLETE");
+    Serial.println("==========================");
+
+    motorStop();
+
+    delay(500);
+
+    // SG90 UNLOCK
+    unlockLid();
+
+    systemState = COMPLETE;
+
+    buzzerComplete();
+
+    updateLCD(
+      "MACHINE: COMPLETE",
+      "DETECTION: N/A",
+      "LID: OPEN",
+      "MOTOR: OFF"
+    );
+
+    sendStatusToServer();
+  }
+}
+
+// =========================
+// SEND DATA TO SERVER
+// =========================
+void sendStatusToServer() {
+
+  if (WiFi.status() != WL_CONNECTED) {
+
+    Serial.println("WiFi not connected.");
+
+    return;
+  }
+
+  HTTPClient http;
+
+  http.begin(SAVE_DATA_URL);
+
+  http.addHeader(
+    "Content-Type",
+    "application/x-www-form-urlencoded"
   );
 
+  String machineStatus;
+
+  if (systemState == READY)
+    machineStatus = "READY";
+
+  else if (systemState == CHOPPING)
+    machineStatus = "PROCESSING";
+
+  else if (systemState == COMPLETE)
+    machineStatus = "COMPLETE";
+
+  else if (systemState == LOCKING)
+    machineStatus = "LOCKING";
+
+  else
+    machineStatus = "ERROR";
+
+  String lidStatus =
+    isLidClosed() ? "CLOSED" : "OPEN";
+
+  String motorStatus =
+    motorRunning ? "ON" : "OFF";
+
+  String data =
+    "machine=" + machineStatus +
+    "&detection=N/A" +
+    "&lid=" + lidStatus +
+    "&motor=" + motorStatus;
+
+  Serial.println("Sending data:");
+  Serial.println(data);
+
+  int responseCode =
+    http.POST(data);
+
+  Serial.print("Server response: ");
+  Serial.println(responseCode);
+
+  http.end();
 }
 
-// ===============================
-// LOCKED STATE
-// ===============================
-
-void keadaanLocked()
-{
-
-  myServoPenutup.write(90);
-
-
-
-  delay(500);
-
-
-
-  myServoLocker.write(90);
-
-
-
-  processComplete = true;
-
-
-
-  paparanLCD(
-    "Waiting...",
-    "NO",
-    "LOCKED"
-  );
-
-}
-
-// ===============================
-// CHECK SENSOR STATUS FROM WEBSITE
-// ===============================
-
-void checkSensorStatus()
-{
-
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        return;
-    }
-
-
-    HTTPClient http;
-
-    http.begin(SERVER_URL);
-
-    int httpCode = http.GET();
-
-
-    if (httpCode == 200)
-    {
-
-        String payload = http.getString();
-
-        Serial.print("SERVER RESPONSE: ");
-        Serial.println(payload);
-
-
-        if (payload.indexOf("\"sensor_enabled\":true") >= 0)
-        {
-
-            sensorEnabled = true;
-
-            Serial.println("SENSOR: ON");
-
-        }
-        else
-        {
-
-            sensorEnabled = false;
-
-            Serial.println("SENSOR: OFF");
-        }
-    }
-
-
-    http.end();
-}
-
-// ===============================
+// =========================
 // SETUP
-// ===============================
-
-void setup()
-{
+// =========================
+void setup() {
 
   Serial.begin(115200);
 
-// ===============================
-// WIFI
-// ===============================
-
-WiFi.begin(
-    WIFI_SSID,
-    WIFI_PASSWORD
-);
-
-Serial.print("Connecting WiFi");
-
-while (WiFi.status() != WL_CONNECTED)
-{
-    delay(500);
-
-    Serial.print(".");
-}
-
-Serial.println();
-
-Serial.println("WiFi Connected");
-
-Serial.print("ESP32 IP: ");
-
-Serial.println(WiFi.localIP());
-
-
-
-
-  // ===============================
-  // BTS7960
-  // ===============================
-
-  pinMode(
-    R_EN_PIN,
-    OUTPUT
-  );
-
-
-  pinMode(
-    L_EN_PIN,
-    OUTPUT
-  );
-
-
-
-  digitalWrite(
-    R_EN_PIN,
-    LOW
-  );
-
-
-  digitalWrite(
-    L_EN_PIN,
-    LOW
-  );
-
-
-
-  pinMode(
-    MOTOR_RPWM,
-    OUTPUT
-  );
-
-
-  pinMode(
-    MOTOR_LPWM,
-    OUTPUT
-  );
-
-
-
-  digitalWrite(
-    MOTOR_RPWM,
-    LOW
-  );
-
-
-  digitalWrite(
-    MOTOR_LPWM,
-    LOW
-  );
-
-
-
   delay(500);
 
-  // ===============================
-  // SENSOR + BUZZER
-  // ===============================
+  Serial.println();
+  Serial.println("==========================");
+  Serial.println("SMART FOOD WASTE CHOPPER");
+  Serial.println("ESP32 CORE V3");
+  Serial.println("SG90 SERVO");
+  Serial.println("==========================");
 
+  // =====================
+  // PIN MODE
+  // =====================
   pinMode(
-    TRIG_PIN,
-    OUTPUT
+    LIMIT_SWITCH_PIN,
+    INPUT_PULLUP
   );
-
-
-  pinMode(
-    ECHO_PIN,
-    INPUT
-  );
-
-
-
-  pinMode(
-    BUZZER_PIN,
-    OUTPUT
-  );
-
-
-  // Active LOW buzzer OFF
-
-  digitalWrite(
-    BUZZER_PIN,
-    HIGH
-  );
-
-  // ===============================
-  // SERVO LEDC FIX
-  // ===============================
-
-  ESP32PWM::allocateTimer(3);
-
-  myServoPenutup.setPeriodHertz(50);
-
-
-  myServoPenutup.attach(
-    27,
-    500,
-    2400
-  );
-
-
-
-  myServoLocker.setPeriodHertz(50);
-
-
-  myServoLocker.attach(
-    26,
-    500,
-    2400
-  );
-
-
-
-  myServoPenutup.write(90);
-
-
-  myServoLocker.write(0);
-
-  // ===============================
-  // MOTOR PWM
-  // ===============================
-
-  ledcAttachChannel(
-    MOTOR_RPWM,
-    MOTOR_FREQ,
-    MOTOR_RESOLUTION,
-    MOTOR_R_CHANNEL
-  );
-
-
-
-  ledcAttachChannel(
-    MOTOR_LPWM,
-    MOTOR_FREQ,
-    MOTOR_RESOLUTION,
-    MOTOR_L_CHANNEL
-  );
-
-
-
-  delay(100);
-
-
-
-  motorStop();
-
-  // ===============================
-  // BUTTON
-  // ===============================
 
   pinMode(
     BUTTON_PIN,
     INPUT_PULLUP
   );
 
-  // ===============================
-  // LCD
-  // ===============================
-
-  Wire.begin(
-    21,
-    22
+  pinMode(
+    BUZZER_PIN,
+    OUTPUT
   );
 
+  pinMode(R_EN, OUTPUT);
+  pinMode(L_EN, OUTPUT);
 
-
-  int status = lcd.begin(
-    20,
-    4
+  // =====================
+  // DEFAULT OUTPUT
+  // =====================
+  digitalWrite(
+    BUZZER_PIN,
+    HIGH
   );
 
+  digitalWrite(R_EN, LOW);
+  digitalWrite(L_EN, LOW);
 
+  // =====================
+  // MOTOR PWM
+  // ESP32 CORE V3
+  // =====================
+  Serial.println("Initializing motor PWM...");
 
-  if(status)
-  {
-
-    Serial.print("LCD ERROR: ");
-
-    Serial.println(status);
-
-
-    while(1);
-
-  }
-
-
-
-  lcd.backlight();
-
-
-
-  keadaanReady();
-
-
-
-  Serial.println("SYSTEM READY");
-
-  Serial.println("PRESS GPIO25 BUTTON");
-
-
-}
-// ===============================
-// LOOP
-// ===============================
-
-void loop()
-{
-
-
-  // ===============================
-  // UPDATE TIMER
-  // ===============================
-
-  motorUpdate();
-
-
-  buttonLockUpdate();
-
-  // ===============================
-  // BUTTON PRESS + RELEASE
-  // ===============================
-
-  bool buttonState = digitalRead(
-    BUTTON_PIN
+  ledcAttach(
+    RPWM,
+    25000,
+    8
   );
 
+  ledcAttach(
+    LPWM,
+    25000,
+    8
+  );
 
+  ledcWrite(RPWM, 0);
+  ledcWrite(LPWM, 0);
 
-  if(lastButtonState == HIGH && buttonState == LOW)
-  {
+  Serial.println("Motor PWM ready.");
 
+  // =====================
+  // SG90 SERVO
+  // =====================
+  Serial.println("Initializing SG90 servo...");
 
-    delay(50);
+  lockServo.setPeriodHertz(50);
 
+  lockServo.attach(
+    SERVO_PIN,
+    500,
+    2400
+  );
 
+  Serial.print("Servo attached: ");
 
-    if(digitalRead(BUTTON_PIN) == LOW)
-    {
+  if (lockServo.attached())
+    Serial.println("YES");
 
-
-      Serial.println("BUTTON PRESSED");
-
-
-
-      // WAIT RELEASE
-
-      while(digitalRead(BUTTON_PIN) == LOW)
-      {
-
-        delay(10);
-
-      }
-
-
-
-      Serial.println("BUTTON RELEASED");
-
-
-
-
-
-
-      // KEEP OLD WORKING MOTOR FUNCTION
-
-      motorFunction();
-
-
-
-
-
-
-      // ADD SERVO LOCK FUNCTION
-
-      buttonLockFunction();
-
-
-
-    }
-
-  }
-
-
-
-  lastButtonState = buttonState;
-
-
-  // ===============================
-  // IMPORTANT
-  // KEEP MOTOR RUNNING
-  // ===============================
-
-  if(motorRunning)
-  {
-
-    delay(10);
-
-    return;
-
-  }
-
-  // ===============================
-  // IGNORE ULTRASONIC DURING BUTTON LOCK
-  // ===============================
-
-  if(buttonLockActive)
-  {
-
-    delay(10);
-
-    return;
-
-  }
-
-  // ===============================
- // SENSOR OFF
- // ===============================
-
-if (!sensorEnabled)
-{
-
-    delay(100);
-
-    return;
-}
-
-
-  // ===============================
-  // ULTRASONIC CHECK
-  // ===============================
-
-  float jarak = bacaJarak();
-
-
-
-  Serial.print("Distance: ");
-
-
-
-
-
-  if(jarak < 0)
-  {
-
-    Serial.println("ERROR");
-
-  }
   else
-  {
+    Serial.println("NO");
 
-    Serial.print(jarak,1);
+  // START WITH UNLOCK
+  unlockLid();
 
-    Serial.println(" cm");
+  Serial.println("SG90 servo ready.");
 
+  // =====================
+  // LCD
+  // =====================
+  Serial.println("Initializing LCD...");
+
+  Wire.begin(21, 22);
+
+  int lcdStatus =
+    lcd.begin(20, 4);
+
+  if (lcdStatus != 0) {
+
+    Serial.print("LCD ERROR CODE: ");
+    Serial.println(lcdStatus);
+
+  } else {
+
+    lcd.backlight();
+    lcd.clear();
+
+    lcd.setCursor(0, 0);
+    lcd.print("SMART FOOD WASTE");
+
+    lcd.setCursor(0, 1);
+    lcd.print("CHOPPER SYSTEM");
+
+    lcd.setCursor(0, 2);
+    lcd.print("ESP32 CORE V3");
+
+    lcd.setCursor(0, 3);
+    lcd.print("INITIALIZING...");
+
+    delay(2000);
+
+    lcd.clear();
+
+    lastLine1 = "";
+    lastLine2 = "";
+    lastLine3 = "";
+    lastLine4 = "";
   }
 
+  // =====================
+  // WIFI
+  // =====================
+  Serial.println("Connecting WiFi...");
 
-  // ===============================
-  // NO OBJECT
-  // ===============================
+  WiFi.begin(
+    WIFI_SSID,
+    WIFI_PASSWORD
+  );
 
-  if(jarak < 10 || jarak > 40)
-  {
+  unsigned long wifiStart =
+    millis();
 
-
-    keadaanReady();
-
+  while (
+    WiFi.status() != WL_CONNECTED &&
+    millis() - wifiStart < 10000
+  ) {
 
     delay(500);
 
-
+    Serial.print(".");
   }
 
-  // ===============================
-  // OBJECT DETECTED
-  // ===============================
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+
+    Serial.println("WiFi CONNECTED.");
+
+    Serial.print("IP Address: ");
+
+    Serial.println(
+      WiFi.localIP()
+    );
+
+  } else {
+
+    Serial.println(
+      "WiFi NOT CONNECTED."
+    );
+
+    Serial.println(
+      "System continues without WiFi."
+    );
+  }
+
+  // =====================
+  // SYSTEM READY
+  // =====================
+  systemState = READY;
+
+  paparanLCD();
+
+  sendStatusToServer();
+
+  // =====================
+  // LIMIT SWITCH STATUS
+  // =====================
+  Serial.println();
+  Serial.println("==========================");
+  Serial.println("LIMIT SWITCH STATUS");
+  Serial.println("==========================");
+
+  Serial.print("GPIO12 = ");
+
+  Serial.println(
+    digitalRead(LIMIT_SWITCH_PIN)
+  );
+
+  if (isLidClosed())
+    Serial.println("LID = CLOSED");
 
   else
-  {
+    Serial.println("LID = OPEN");
 
+  Serial.println();
+  Serial.println("==========================");
+  Serial.println("SYSTEM READY");
+  Serial.println("==========================");
+}
 
-    processComplete = false;
+// =========================
+// LOOP
+// =========================
+void loop() {
 
+  // =====================
+  // MOTOR UPDATE
+  // =====================
+  motorUpdate();
 
+  // =====================
+  // BUZZER TIMER
+  // =====================
+  if (buzzerRunning) {
 
-    keadaanProcess();
+    if (
+      millis() - buzzerStartTime
+      >= BUZZER_TIME
+    ) {
 
+      buzzerOff();
 
+      if (systemState == COMPLETE) {
 
-    Serial.println("OBJECT DETECTED");
-
-
-
-    unsigned long startTime = millis();
-
-
-    while(millis() - startTime < 20000)
-    {
-
-      delay(10);
-
+        updateLCD(
+          "MACHINE: COMPLETE",
+          "DETECTION: N/A",
+          "LID: OPEN",
+          "MOTOR: OFF"
+        );
+      }
     }
-
-
-    float checkJarak = bacaJarak();
-
-
-    if(checkJarak > 10 && checkJarak <= 40)
-    {
-
-
-      keadaanProcess();
-
-
-      Serial.println("OBJECT STILL THERE");
-
-
-    }
-    else
-    {
-
-
-      keadaanLocked();
-
-
-      Serial.println("PROCESS COMPLETE");
-
-
-
-      // Active LOW buzzer OFF
-
-      digitalWrite(
-        BUZZER_PIN,
-        HIGH
-      );
-
-
-    }
-
-
-
-    delay(5000);
-
-
   }
 
+  // =====================
+  // ERROR STATE
+  // =====================
+  if (systemState == ERROR_STATE) {
 
+    motorStop();
+
+    if (isLidClosed()) {
+
+      Serial.println("LID CLOSED.");
+      Serial.println("SYSTEM READY.");
+
+      systemState = READY;
+
+      paparanLCD();
+
+      sendStatusToServer();
+    }
+
+    delay(50);
+
+    return;
+  }
+
+  // =====================
+  // COMPLETE STATE
+  // =====================
+  if (systemState == COMPLETE) {
+
+    if (isLidOpen()) {
+
+      Serial.println();
+      Serial.println("LID OPEN.");
+      Serial.println("SYSTEM READY.");
+
+      systemState = READY;
+
+      paparanLCD();
+
+      sendStatusToServer();
+    }
+
+    delay(50);
+
+    return;
+  }
+
+  // =====================
+  // LOCKING STATE
+  // =====================
+  if (systemState == LOCKING) {
+
+    motorStop();
+
+    delay(50);
+
+    return;
+  }
+
+  // =====================
+  // BUTTON
+  // =====================
+  if (digitalRead(BUTTON_PIN) == LOW) {
+
+    delay(50);
+
+    if (digitalRead(BUTTON_PIN) == LOW) {
+
+      Serial.println();
+      Serial.println("BUTTON PRESSED");
+
+      if (systemState == READY) {
+
+        if (isLidClosed()) {
+
+          motorStart();
+
+          sendStatusToServer();
+
+        } else {
+
+          Serial.println(
+            "CANNOT START."
+          );
+
+          Serial.println(
+            "LID IS OPEN."
+          );
+
+          motorStop();
+
+          systemState =
+            ERROR_STATE;
+
+          paparanLCD();
+
+          sendStatusToServer();
+        }
+      }
+
+      // WAIT BUTTON RELEASE
+      while (
+        digitalRead(BUTTON_PIN) == LOW
+      ) {
+
+        delay(10);
+      }
+    }
+  }
+
+  // =====================
+  // LIMIT SWITCH MONITOR
+  // =====================
+  static int previousLimitState = -1;
+
+  int currentLimitState =
+    digitalRead(LIMIT_SWITCH_PIN);
+
+  if (
+    currentLimitState !=
+    previousLimitState
+  ) {
+
+    previousLimitState =
+      currentLimitState;
+
+    Serial.print("GPIO12 = ");
+
+    Serial.print(
+      currentLimitState
+    );
+
+    if (currentLimitState == HIGH)
+      Serial.println(
+        " -> LID CLOSED"
+      );
+
+    else
+      Serial.println(
+        " -> LID OPEN"
+      );
+
+    if (systemState == READY)
+      paparanLCD();
+  }
+
+  delay(50);
 }
+
