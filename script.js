@@ -5,7 +5,146 @@ let remaining = 0;
 const LOCK_COUNTDOWN = 20;
 
 const CHOP_TIME = 30;
+// ===============================
+// SENSOR CONTROL
+// ===============================
 
+let sensorEnabled = false;
+
+
+// ===============================
+// SENSOR ON / OFF
+// ===============================
+
+function toggleSensor() {
+
+    const button = document.getElementById("sensorBtn");
+    const message = document.getElementById("sensorMessage");
+
+    const command = sensorEnabled
+        ? "SENSOR_OFF"
+        : "SENSOR_ON";
+
+
+    fetch("command.php", {
+
+        method: "POST",
+
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded"
+        },
+
+        body: "command=" + command
+
+    })
+
+    .then(response => response.json())
+
+    .then(data => {
+
+        if (data.success) {
+
+            sensorEnabled = data.sensor_enabled;
+
+            if (sensorEnabled) {
+
+                button.textContent = "SENSOR ON";
+
+                button.classList.remove("sensor-off");
+
+                button.classList.add("sensor-on");
+
+                message.textContent =
+                    "Ultrasonic Sensor is ON";
+
+            } else {
+
+                button.textContent = "SENSOR OFF";
+
+                button.classList.remove("sensor-on");
+
+                button.classList.add("sensor-off");
+
+                message.textContent =
+                    "Ultrasonic Sensor is OFF";
+            }
+
+        }
+
+    })
+
+    .catch(error => {
+
+        console.error("Sensor error:", error);
+
+    });
+}
+
+
+// ===============================
+// CHECK SENSOR STATUS
+// ===============================
+
+function loadSensorStatus() {
+
+    fetch("command.php?get=sensor")
+
+    .then(response => response.json())
+
+    .then(data => {
+
+        if (data.success) {
+
+            sensorEnabled = data.sensor_enabled;
+
+            const button =
+                document.getElementById("sensorBtn");
+
+            const message =
+                document.getElementById("sensorMessage");
+
+
+            if (sensorEnabled) {
+
+                button.textContent = "SENSOR ON";
+
+                button.classList.remove("sensor-off");
+
+                button.classList.add("sensor-on");
+
+                message.textContent =
+                    "Ultrasonic Sensor is ON";
+
+            } else {
+
+                button.textContent = "SENSOR OFF";
+
+                button.classList.remove("sensor-on");
+
+                button.classList.add("sensor-off");
+
+                message.textContent =
+                    "Ultrasonic Sensor is OFF";
+            }
+
+        }
+
+    })
+
+    .catch(error => {
+
+        console.error("Cannot get sensor status:", error);
+
+    });
+}
+
+
+// Check sensor status when page opens
+
+document.addEventListener(
+    "DOMContentLoaded",
+    loadSensorStatus
+);
 
 function updateStatus(
     machine,

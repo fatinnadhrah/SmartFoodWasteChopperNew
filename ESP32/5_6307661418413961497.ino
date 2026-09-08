@@ -568,6 +568,56 @@ void keadaanLocked()
 }
 
 // ===============================
+// CHECK SENSOR STATUS FROM WEBSITE
+// ===============================
+
+void checkSensorStatus()
+{
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        return;
+    }
+
+
+    HTTPClient http;
+
+    http.begin(SERVER_URL);
+
+    int httpCode = http.GET();
+
+
+    if (httpCode == 200)
+    {
+
+        String payload = http.getString();
+
+        Serial.print("SERVER RESPONSE: ");
+        Serial.println(payload);
+
+
+        if (payload.indexOf("\"sensor_enabled\":true") >= 0)
+        {
+
+            sensorEnabled = true;
+
+            Serial.println("SENSOR: ON");
+
+        }
+        else
+        {
+
+            sensorEnabled = false;
+
+            Serial.println("SENSOR: OFF");
+        }
+    }
+
+
+    http.end();
+}
+
+// ===============================
 // SETUP
 // ===============================
 
@@ -575,6 +625,34 @@ void setup()
 {
 
   Serial.begin(115200);
+
+// ===============================
+// WIFI
+// ===============================
+
+WiFi.begin(
+    WIFI_SSID,
+    WIFI_PASSWORD
+);
+
+Serial.print("Connecting WiFi");
+
+while (WiFi.status() != WL_CONNECTED)
+{
+    delay(500);
+
+    Serial.print(".");
+}
+
+Serial.println();
+
+Serial.println("WiFi Connected");
+
+Serial.print("ESP32 IP: ");
+
+Serial.println(WiFi.localIP());
+
+
 
 
   // ===============================
@@ -892,6 +970,18 @@ void loop()
     return;
 
   }
+
+  // ===============================
+ // SENSOR OFF
+ // ===============================
+
+if (!sensorEnabled)
+{
+
+    delay(100);
+
+    return;
+}
 
 
   // ===============================
