@@ -65,8 +65,23 @@ SystemState systemState = READY;
 const char* WIFI_SSID = "moonzzzz";
 const char* WIFI_PASSWORD = "123456789";
 
+void onWiFiDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
+
+  Serial.print("WiFi disconnect reason code: ");
+  Serial.println(info.wifi_sta_disconnected.reason);
+  // Common ones:
+  // 2   = AUTH_EXPIRE
+  // 15  = 4WAY_HANDSHAKE_TIMEOUT  (classic WRONG PASSWORD signature)
+  // 201 = NO_AP_FOUND
+  // 202 = AUTH_FAIL              (wrong password)
+  // 203 = ASSOC_FAIL
+}
+
+// IP address of the PC running XAMPP on the SAME Wi-Fi network as the ESP32.
+// Find it with `ipconfig` on the PC (look under the "Wi-Fi" adapter, NOT
+// any VMware/VirtualBox virtual adapter) and update this if the PC's IP changes.
 const char* SAVE_DATA_URL =
-  "http://192.168.224.1/SmartFoodWasteChopperNew/save_data.php";
+  "http://172.20.10.2/SmartFoodWasteChopperNew/save_data.php";
 
 // =========================
 // LCD MEMORY
@@ -574,10 +589,10 @@ void sendStatusToServer() {
     motorRunning ? "ON" : "OFF";
 
   String data =
-    "machine=" + machineStatus +
+    "machine_status=" + machineStatus +
     "&detection=N/A" +
-    "&lid=" + lidStatus +
-    "&motor=" + motorStatus;
+    "&lid_status=" + lidStatus +
+    "&motor_status=" + motorStatus;
 
   Serial.println("Sending data:");
   Serial.println(data);
@@ -733,6 +748,36 @@ void setup() {
   // =====================
   // WIFI
   // =====================
+  WiFi.onEvent(onWiFiDisconnected, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true);
+  delay(200);
+
+  Serial.println();
+  Serial.println("Scanning for WiFi networks...");
+
+  int networksFound = WiFi.scanNetworks();
+
+  if (networksFound == 0) {
+
+    Serial.println("No networks found at all!");
+
+  } else {
+
+    for (int i = 0; i < networksFound; i++) {
+
+      Serial.print(i + 1);
+      Serial.print(": ");
+      Serial.print(WiFi.SSID(i));
+      Serial.print(" (RSSI ");
+      Serial.print(WiFi.RSSI(i));
+      Serial.print(", ch ");
+      Serial.print(WiFi.channel(i));
+      Serial.println(")");
+    }
+  }
+
   Serial.println("Connecting WiFi...");
 
   WiFi.begin(
@@ -770,6 +815,12 @@ void setup() {
     Serial.println(
       "WiFi NOT CONNECTED."
     );
+
+    Serial.print("WiFi.status() code: ");
+    Serial.println(WiFi.status());
+    // 1 = WL_NO_SSID_AVAIL (SSID not seen)
+    // 4 = WL_CONNECT_FAILED (wrong password / auth rejected)
+    // 6 = WL_DISCONNECTED
 
     Serial.println(
       "System continues without WiFi."

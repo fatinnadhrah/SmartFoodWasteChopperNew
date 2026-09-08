@@ -165,30 +165,31 @@ $username = $_SESSION["username"];
 
                 </div>
 
-                    <!-- SENSOR CONTROL -->
+                <!-- SENSOR CONTROL -->
 
-    <div class="sensor-control">
+                <div class="sensor-control">
 
-        <h2>SENSOR CONTROL</h2>
+                    <h2>SENSOR CONTROL</h2>
 
-        <p>
-            Ultrasonic Sensor
-        </p>
+                    <p>
+                        Ultrasonic Sensor
+                    </p>
 
-        <button
-            id="sensorBtn"
-            class="sensor-off"
-            onclick="toggleSensor()"
-        >
-            SENSOR OFF
-        </button>
+                    <button
+                        id="sensorBtn"
+                        class="sensor-off"
+                        onclick="toggleSensor()"
+                    >
+                        SENSOR OFF
+                    </button>
 
-        <p id="sensorMessage">
-            Sensor is OFF
-        </p>
+                    <p id="sensorMessage">
+                        Sensor is OFF
+                    </p>
 
-    </div>
-            </section
+                </div>
+
+            </section>
 
 
             <section class="log-panel">
